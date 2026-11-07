@@ -1,6 +1,6 @@
 // Offline support: caches the app itself (never your data – that lives encrypted in IndexedDB).
 // Bump VERSION whenever you change any file so devices pick up the update.
-const VERSION = 'twofold-v3';
+const VERSION = 'twofold-v4';
 const ASSETS = [
   './', 'index.html', 'manifest.webmanifest', 'css/style.css',
   'js/app.js', 'js/vault.js', 'js/db.js', 'js/crypto.js', 'js/github.js', 'js/media.js',

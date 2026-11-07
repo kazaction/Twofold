@@ -20,7 +20,7 @@ const CODE_PREFIX = 'TF1.';
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const PATH_RE = /^blobs\/[A-Za-z0-9_-]{8,64}\.bin$/;
 
-const UPDATE_TYPES = new Set(['chat_update', 'msg_edit', 'msg_delete', 'cal_edit', 'cal_delete', 'pin_set', 'tl_edit', 'tl_delete']);
+const UPDATE_TYPES = new Set(['chat_update', 'msg_edit', 'msg_delete', 'cal_edit', 'cal_delete', 'pin_set', 'tl_edit', 'tl_delete', 'tl_move']);
 const pushTimeOf = (path) => parseInt(path.split('/').pop().split('-')[0], 36) || 0;
 const cmp = (a, b) => (a.ts - b.ts) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const clip = (s, n) => (typeof s === 'string' ? s.slice(0, n) : '');
@@ -193,7 +193,7 @@ export class Vault extends EventTarget {
         }
         case 'cal_add':
           if (!calendar.has(ev.ev) && DAY_RE.test(ev.day)) calendar.set(ev.ev, {
-            id: ev.ev, day: ev.day, title: clip(ev.title, 200) || 'Event', author: ev.a, created: ev.ts, editedBy: null, deleted: false, pending,
+            id: ev.ev, day: ev.day, title: clip(ev.title, 200) || 'Event', yearly: !!ev.yearly, author: ev.a, created: ev.ts, editedBy: null, deleted: false, pending,
           });
           break;
         case 'cal_edit': {
@@ -201,6 +201,7 @@ export class Vault extends EventTarget {
           if (!e || e.deleted) break;
           if (ev.title !== undefined) e.title = clip(ev.title, 200) || e.title;
           if (ev.day !== undefined && DAY_RE.test(ev.day)) e.day = ev.day;
+          if (ev.yearly !== undefined) e.yearly = !!ev.yearly;
           e.editedBy = ev.a; e.pending ||= pending;
           break;
         }
@@ -211,7 +212,7 @@ export class Vault extends EventTarget {
         }
         case 'tl_add':
           if (!items.has(ev.item) && chats.get(ev.chat)?.kind === 'timeline') items.set(ev.item, {
-            id: ev.item, chat: ev.chat, title: clip(ev.title, 120) || 'Untitled', desc: clip(ev.desc, 10000), color: clip(ev.color, 16),
+            id: ev.item, chat: ev.chat, pos: Number.isFinite(ev.pos) ? ev.pos : ev.ts, title: clip(ev.title, 120) || 'Untitled', desc: clip(ev.desc, 10000), color: clip(ev.color, 16),
             author: ev.a, created: ev.ts, edited: null, editedBy: null, deleted: false, pending,
           });
           break;
@@ -222,6 +223,11 @@ export class Vault extends EventTarget {
           if (ev.desc !== undefined) it.desc = clip(ev.desc, 10000);
           if (ev.color !== undefined) it.color = clip(ev.color, 16);
           it.edited = ev.ts; it.editedBy = ev.a; it.pending ||= pending;
+          break;
+        }
+        case 'tl_move': {
+          const it = items.get(ev.item);
+          if (it && !it.deleted && Number.isFinite(ev.pos)) { it.pos = ev.pos; it.pending ||= pending; }
           break;
         }
         case 'tl_delete': {
@@ -247,7 +253,7 @@ export class Vault extends EventTarget {
     for (const c of chats.values()) if (c.kind === 'timeline') byTimeline.set(c.id, []);
     for (const it of items.values()) if (!it.deleted) byTimeline.get(it.chat)?.push(it);
     for (const [id, list] of byTimeline) {
-      list.sort((a, b) => (a.created - b.created) || (a.id < b.id ? -1 : 1));
+      list.sort((a, b) => (a.pos - b.pos) || (a.created - b.created) || (a.id < b.id ? -1 : 1));
       const c = chats.get(id);
       c.count = list.length;
       if (list.length) c.lastTs = Math.max(c.created, list[list.length - 1].created);
@@ -275,7 +281,25 @@ export class Vault extends EventTarget {
   }
 
   // ---- timelines ----
-  addItem(chat, { title, desc = '', color = '' }) { return this.emit('tl_add', { item: C.randomId(), chat, title: title.trim(), desc, color }); }
+  addItem(chat, { title, desc = '', color = '' }) {
+    const list = this.byTimeline.get(chat) || [];
+    const pos = Math.max(Date.now(), (list[list.length - 1]?.pos ?? 0) + 1000); // always lands at the end
+    return this.emit('tl_add', { item: C.randomId(), chat, pos, title: title.trim(), desc, color });
+  }
+  // Move an item so it sits at index `to` in its timeline (0 = first).
+  moveItem(id, to) {
+    const it = this.items.get(id);
+    if (!it) return;
+    const list = (this.byTimeline.get(it.chat) || []).filter((x) => x.id !== id);
+    to = Math.max(0, Math.min(to, list.length));
+    const before = list[to - 1], after = list[to];
+    let pos;
+    if (!before && !after) return;
+    else if (!before) pos = after.pos - 1000;
+    else if (!after) pos = before.pos + 1000;
+    else pos = (before.pos + after.pos) / 2;
+    return this.emit('tl_move', { item: id, pos });
+  }
   editItem(id, fields) { return this.emit('tl_edit', { item: id, ...fields }); }
   deleteItem(id) { return this.emit('tl_delete', { item: id }); }
   updateChat(id, fields) {
@@ -284,7 +308,7 @@ export class Vault extends EventTarget {
   }
 
   // ---- calendar ----
-  addEvent(day, title) { return this.emit('cal_add', { ev: C.randomId(), day, title: title.trim() }); }
+  addEvent(day, title, yearly = false) { return this.emit('cal_add', { ev: C.randomId(), day, title: title.trim(), yearly: !!yearly }); }
   editEvent(id, fields) { return this.emit('cal_edit', { ev: id, ...fields }); }
   deleteEvent(id) { return this.emit('cal_delete', { ev: id }); }
 
@@ -549,7 +573,7 @@ export class Vault extends EventTarget {
     const name = (id) => this.members.get(id)?.name || id;
     return {
       exported: new Date().toISOString(),
-      calendar: [...this.calendar.values()].filter((e) => !e.deleted).sort((a, b) => a.day.localeCompare(b.day)).map((e) => ({ day: e.day, title: e.title, by: name(e.author) })),
+      calendar: [...this.calendar.values()].filter((e) => !e.deleted).sort((a, b) => a.day.localeCompare(b.day)).map((e) => ({ day: e.day, title: e.title, yearly: e.yearly || undefined, by: name(e.author) })),
       members: [...this.members.values()],
       chats: [...this.chats.values()].map((c) => ({
         name: c.name, kind: c.kind, emoji: c.emoji, desc: c.desc,

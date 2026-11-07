@@ -414,3 +414,18 @@ label.check .ic { width: 15px; height: 15px; margin-right: -4px; }
   .tl-slot.up .tl-box { bottom: calc(50% + 28px); }
   .tl-slot.down .tl-box { top: calc(50% + 28px); }
 }
+
+/* ---------- v4: rearranging timelines, yearly events ---------- */
+.tl-box { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.tl-slot.moving .tl-box, .tl-slot.moving .tl-stem, .tl-slot.moving .tl-dot { opacity: .22; }
+.tl-ghost { position: fixed !important; z-index: 80; pointer-events: none; margin: 0 !important; bottom: auto !important; right: auto !important;
+  transform: rotate(-2deg) scale(1.05) !important; box-shadow: 0 18px 40px rgba(0,0,0,.55) !important; transition: none !important; }
+.tl-marker { position: absolute; top: 18%; bottom: 18%; width: 4px; margin-left: -2px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 14px var(--accent); z-index: 2; pointer-events: none; transition: left .12s; }
+.tl-wrap.arranging { cursor: grabbing; }
+.tl-hint { position: absolute; left: 16px; bottom: calc(18px + var(--safe-b)); display: flex; align-items: center; gap: 6px; margin: 0; pointer-events: none; }
+.tl-hint .ic { width: 14px; height: 14px; }
+.move-row { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; }
+.move-row .btn { padding: 7px 10px; }
+.yearly-check { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
+.yearly-check .ic, .yearly-tag .ic { width: 13px; height: 13px; }
+.yearly-tag { display: inline-flex; align-items: center; gap: 4px; color: var(--accent); }

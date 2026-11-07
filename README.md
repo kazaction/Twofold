@@ -70,6 +70,11 @@ only through something you trust (e.g. Signal), then delete that message.
 Tap **Calendar** at the top of the sidebar. Pick a day, type a title, then press **Add**. Tap an event
 to rename it, move it to another day, or delete it. Event colours show who added them.
 
+Tick **Repeats every year** for birthdays and anniversaries, either when adding the event or later
+in its edit window. Yearly events show on that date every year from the first one on, marked ↻,
+and say how many years it has been (e.g. "6 years since 2020"). An event on 29 February shows on
+the 28th in non-leap years.
+
 ## Timelines
 
 Tap **+** next to Twofold in the sidebar, then choose **Timeline** instead of Chat. A timeline is one
@@ -79,7 +84,10 @@ long horizontal line. Scroll it sideways: swipe on a phone, or use the mouse whe
   a title, a description and a colour. New events are added to the end of the line.
 - Boxes show only the title. Tap one to read the full description and edit the title, description
   or colour, or to delete it.
-- Both of you can add and edit events. If you both edit the same event, the one synced last wins.
+- **Rearrange:** on a computer, drag a box to a new spot. On a phone, **press and hold** a box until it
+  lifts, then slide it. A glowing line shows where it will land, and the line scrolls by itself near
+  the edges. You can also open an event and use **Earlier / Later**.
+- Both of you can add, edit and move events. If you both change the same event, the one synced last wins.
 - Timeline events show up in search, and a timeline can be locked with the PIN like any chat.
 
 ## Locked chats

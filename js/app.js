@@ -61,6 +61,8 @@ const ICONS = {
   calendar: '<rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
   backspace: '<path d="M20 5H9l-7 7 7 7h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Z"/><path d="m18 9-6 6M12 9l6 6"/>',
   timeline: '<path d="M2 12h20"/><circle cx="7" cy="12" r="2.2"/><circle cx="17" cy="12" r="2.2"/><path d="M7 9.8V5M17 14.2V19"/>',
+  repeat: '<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
+  grip: '<circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/>',
   archive: '<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/>',
 };
 const icon = (n, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n]}</svg>`;
@@ -387,7 +389,8 @@ function renderSidebar() {
       ${c.locked ? `<span class="lock-open" title="Unlocked until you leave">${icon('lock')}</span>` : ''}
       ${c.pending ? `<span class="dot" title="Not synced yet"></span>` : `<span class="chat-count">${c.count || ''}</span>`}
     </button>`;
-  const upcoming = [...vault.calendar.values()].filter((e) => !e.deleted && e.day >= dayKey(new Date())).length;
+  const todayK = dayKey(new Date()), soonK = dayKey(new Date(Date.now() + 30 * 86400000));
+  const upcoming = [...vault.calendar.values()].filter((e) => { if (e.deleted) return false; const n = nextOccurrence(e, todayK); return n >= todayK && n <= soonK; }).length;
   list.innerHTML = `<button class="chat-item cal-item ${ui.view === 'calendar' ? 'on' : ''}" data-cal>
       <span class="chat-emoji">${icon('calendar')}</span><span class="chat-name">Calendar</span><span class="chat-count">${upcoming || ''}</span></button>
     <div class="side-label">Chats</div>` +
@@ -518,7 +521,7 @@ function onMessageClick(e) {
   else if (act === 'unlock') unlockChat(ui.chat);
   else if (act.startsWith('cal-')) calendarAction(act, t);
   else if (act === 'tl-add') itemDialog(ui.chat, null);
-  else if (act === 'tl-open') itemDialog(ui.chat, t.dataset.item);
+  else if (act === 'tl-open') { if (Date.now() - (ui.tlSuppress || 0) > 60) itemDialog(ui.chat, t.dataset.item); }
   else if (act === 'new-chat') chatDialog();
   else if (act === 'more') messageMenu(t.closest('.msg').dataset.id);
   else if (act === 'view') {
@@ -753,6 +756,23 @@ async function unlockChat(id) {
 const pad2 = (n) => String(n).padStart(2, '0');
 const dayKey = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 const parseDay = (k) => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d); };
+const isLeap = (y) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+// Does calendar event `e` happen on day `k`? Yearly events repeat on the same date from their first year on
+// (a Feb 29 event shows on Feb 28 in non-leap years).
+function occursOn(e, k) {
+  if (!e.yearly) return e.day === k;
+  if (k < e.day) return false;
+  const md = e.day.slice(5), kmd = k.slice(5);
+  return md === kmd || (md === '02-29' && kmd === '02-28' && !isLeap(+k.slice(0, 4)));
+}
+function nextOccurrence(e, fromK) {
+  if (!e.yearly || e.day >= fromK) return e.day;
+  for (let y = +fromK.slice(0, 4); ; y++) {
+    const md = e.day.slice(5) === '02-29' && !isLeap(y) ? '02-28' : e.day.slice(5);
+    if (`${y}-${md}` >= fromK) return `${y}-${md}`;
+  }
+}
+const eventsOn = (k) => [...vault.calendar.values()].filter((e) => !e.deleted && occursOn(e, k)).sort((a, b) => a.created - b.created);
 const fmtDayLong = (k) => parseDay(k).toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
 function renderCalendar(box) {
@@ -762,33 +782,36 @@ function renderCalendar(box) {
   // keep whatever is being typed if a sync re-renders the view
   const typing = $('#cal-title', box);
   const draft = typing?.value || '', hadFocus = typing && document.activeElement === typing;
+  const yearlyDraft = $('#cal-yearly', box)?.checked || false;
   const [y, m] = ui.calMonth.split('-').map(Number);
   const first = new Date(y, m - 1, 1);
   const offset = (first.getDay() + 6) % 7; // Monday first
-  const byDay = new Map();
-  for (const e of vault.calendar.values()) {
-    if (e.deleted) continue;
-    if (!byDay.has(e.day)) byDay.set(e.day, []);
-    byDay.get(e.day).push(e);
-  }
-  for (const list of byDay.values()) list.sort((a, b) => a.created - b.created);
   const dows = [...Array(7)].map((_, i) => new Date(2024, 0, 1 + i).toLocaleDateString([], { weekday: 'short' }));
   let cells = '';
   for (let i = 0; i < 42; i++) {
     const d = new Date(y, m - 1, 1 - offset + i);
-    const k = dayKey(d), evs = byDay.get(k) || [];
+    const k = dayKey(d), evs = eventsOn(k);
     cells += `<button class="cal-cell ${d.getMonth() !== m - 1 ? 'other' : ''} ${k === todayK ? 'today' : ''} ${k === ui.calDay ? 'sel' : ''}" data-act="cal-day" data-day="${k}">
       <span class="n">${d.getDate()}</span>
-      <span class="chips">${evs.slice(0, 3).map((e) => `<span class="chip p${memberIndex(e.author)}">${esc(e.title)}</span>`).join('')}${evs.length > 3 ? `<span class="more">+${evs.length - 3}</span>` : ''}</span>
+      <span class="chips">${evs.slice(0, 3).map((e) => `<span class="chip p${memberIndex(e.author)}">${e.yearly ? '↻ ' : ''}${esc(e.title)}</span>`).join('')}${evs.length > 3 ? `<span class="more">+${evs.length - 3}</span>` : ''}</span>
     </button>`;
     if (i === 34 && new Date(y, m - 1, 1 - offset + 35).getMonth() !== m - 1) break; // 5 weeks are enough
   }
-  const dayEvents = byDay.get(ui.calDay) || [];
-  const upcoming = [...vault.calendar.values()].filter((e) => !e.deleted && e.day >= todayK).sort((a, b) => a.day.localeCompare(b.day) || a.created - b.created).slice(0, 12);
-  const evRow = (e, showDay) => `<button class="cal-ev" data-act="cal-edit" data-ev="${esc(e.id)}">
+  const dayEvents = eventsOn(ui.calDay);
+  const upcoming = [...vault.calendar.values()].filter((e) => !e.deleted).map((e) => ({ e, on: nextOccurrence(e, todayK) }))
+    .filter((x) => x.on >= todayK).sort((a, b) => a.on.localeCompare(b.on) || a.e.created - b.e.created).slice(0, 12);
+  const evRow = (e, on, showDay) => {
+    const years = e.yearly ? +on.slice(0, 4) - +e.day.slice(0, 4) : 0;
+    const bits = [];
+    if (showDay) bits.push(esc(parseDay(on).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })));
+    if (e.yearly) bits.push(`<span class="yearly-tag">${icon('repeat')} every year${years > 0 ? ` · ${years} ${years === 1 ? 'year' : 'years'} since ${e.day.slice(0, 4)}` : ''}</span>`);
+    bits.push(`added by ${esc(nameOf(e.author))}`);
+    if (e.pending) bits.push('not synced');
+    return `<button class="cal-ev" data-act="cal-edit" data-ev="${esc(e.id)}">
       <span class="bar p${memberIndex(e.author)}"></span>
-      <span class="grow"><b>${esc(e.title)}</b><span class="muted small">${showDay ? esc(parseDay(e.day).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })) + ' · ' : ''}added by ${esc(nameOf(e.author))}${e.pending ? ' · not synced' : ''}</span></span>
+      <span class="grow"><b>${esc(e.title)}</b><span class="muted small">${bits.join(' · ')}</span></span>
       ${icon('edit', 'muted')}</button>`;
+  };
   box.innerHTML = `
   <div class="cal">
     <div class="cal-head">
@@ -801,14 +824,16 @@ function renderCalendar(box) {
     <div class="cal-side">
       <section class="cal-day">
         <h3>${esc(fmtDayLong(ui.calDay))}</h3>
-        ${dayEvents.map((e) => evRow(e, false)).join('') || '<p class="muted small">Nothing on this day.</p>'}
+        ${dayEvents.map((e) => evRow(e, ui.calDay, false)).join('') || '<p class="muted small">Nothing on this day.</p>'}
         <div class="cal-add"><input id="cal-title" maxlength="200" placeholder="Add an event on this day…" enterkeyhint="done"><button class="btn primary" data-act="cal-add">${icon('plus')} Add</button></div>
+        <label class="check yearly-check"><input type="checkbox" id="cal-yearly"> ${icon('repeat')} Repeats every year (birthdays, anniversaries…)</label>
       </section>
-      <section><h3>Upcoming</h3>${upcoming.map((e) => evRow(e, true)).join('') || '<p class="muted small">No upcoming events.</p>'}</section>
+      <section><h3>Upcoming</h3>${upcoming.map((x) => evRow(x.e, x.on, true)).join('') || '<p class="muted small">No upcoming events.</p>'}</section>
     </div>
   </div>`;
   const input = $('#cal-title', box);
   input.value = draft;
+  $('#cal-yearly', box).checked = yearlyDraft;
   if (hadFocus) input.focus();
   input.onkeydown = (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); calendarAction('cal-add'); } };
 }
@@ -826,8 +851,9 @@ async function calendarAction(act, t) {
     const input = $('#cal-title');
     const title = input.value.trim();
     if (!title) return input.focus();
+    const yearly = $('#cal-yearly')?.checked;
     input.value = '';
-    await vault.addEvent(ui.calDay, title);
+    await vault.addEvent(ui.calDay, title, yearly);
     return;
   } else if (act === 'cal-edit') {
     return eventDialog(t.dataset.ev);
@@ -842,7 +868,8 @@ function eventDialog(id) {
     <h2>Edit event</h2>
     <p class="muted small">Added by ${esc(nameOf(e.author))}${e.editedBy ? ` · last edited by ${esc(nameOf(e.editedBy))}` : ''}</p>
     <label>Title<input id="ev-title" maxlength="200" value="${esc(e.title)}" autofocus></label>
-    <label>Day<input id="ev-day" type="date" value="${esc(e.day)}"></label>
+    <label>${e.yearly ? 'Date (first year)' : 'Day'}<input id="ev-day" type="date" value="${esc(e.day)}"></label>
+    <label class="check"><input type="checkbox" id="ev-yearly" ${e.yearly ? 'checked' : ''}> ${icon('repeat')} Repeats every year</label>
     <div class="row end"><button class="btn ghost danger-text" id="ev-del">${icon('trash')} Delete</button><span class="grow"></span>
       <button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="ev-save">Save</button></div>`);
   $('#ev-save', d.el).onclick = async () => {
@@ -851,6 +878,8 @@ function eventDialog(id) {
     const f = {};
     if (title !== e.title) f.title = title;
     if (day !== e.day) f.day = day;
+    const yearly = $('#ev-yearly', d.el).checked;
+    if (yearly !== !!e.yearly) f.yearly = yearly;
     if (Object.keys(f).length) await vault.editEvent(id, f);
     if (f.day) { ui.calDay = day; ui.calMonth = day.slice(0, 7); renderMessages(); }
     d.close();
@@ -940,6 +969,7 @@ const TL_COLORS = {
 const tlColor = (k) => (TL_COLORS[k] ? k : 'blue');
 
 function renderTimeline(box, c, toEnd) {
+  if (ui.tlDragging) { ui.tlRedraw = true; return; } // don't yank the line away mid-drag
   const items = vault.byTimeline.get(c.id) || [];
   const old = $('.tl-wrap', box);
   const prevLeft = old?.scrollLeft ?? 0;
@@ -962,6 +992,7 @@ function renderTimeline(box, c, toEnd) {
       </div>
       ${items.length ? '' : '<p class="tl-empty muted">Empty timeline – tap + to add the first event.</p>'}
     </div>
+    ${items.length > 1 ? `<p class="tl-hint muted small">${icon('grip')} ${isTouch ? 'Press and hold' : 'Drag'} an event to move it</p>` : ''}
     <button class="tl-fab" data-act="tl-add" title="Add event">${icon('plus')}</button>`;
   const wrap = $('.tl-wrap', box);
   wrap.scrollLeft = toEnd || atEnd ? wrap.scrollWidth : prevLeft;
@@ -969,15 +1000,90 @@ function renderTimeline(box, c, toEnd) {
   wrap.addEventListener('wheel', (e) => {
     if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { wrap.scrollLeft += e.deltaY; e.preventDefault(); }
   }, { passive: false });
-  let drag = null;
+  // ---- panning (mouse drag on empty space) and rearranging (drag a box; on touch press-and-hold first) ----
+  const track = $('.tl-track', wrap);
+  let pan = null, mv = null, raf = 0;
+  const others = () => [...track.querySelectorAll('.tl-slot:not(.moving)')];
+  const targetIndex = (x) => others().filter((sl) => { const r = sl.getBoundingClientRect(); return r.left + r.width / 2 < x; }).length;
+  const placeMarker = (idx) => {
+    const list = others();
+    const left = idx < list.length ? list[idx].offsetLeft : list.length ? list[list.length - 1].offsetLeft + list[list.length - 1].offsetWidth : 70;
+    mv.marker.style.left = `${left}px`;
+  };
+  const startMove = () => {
+    if (!mv || mv.active) return;
+    mv.active = true; ui.tlDragging = true;
+    navigator.vibrate?.(15);
+    try { wrap.setPointerCapture(mv.pid); } catch {}
+    const r = mv.box.getBoundingClientRect();
+    mv.offX = mv.x - r.left;
+    mv.ghost = mv.box.cloneNode(true);
+    mv.ghost.classList.add('tl-ghost');
+    Object.assign(mv.ghost.style, { width: `${r.width}px`, height: `${r.height}px`, left: `${r.left}px`, top: `${r.top}px` });
+    document.body.append(mv.ghost);
+    mv.box.closest('.tl-slot').classList.add('moving');
+    mv.marker = document.createElement('div');
+    mv.marker.className = 'tl-marker';
+    track.append(mv.marker);
+    wrap.classList.add('arranging');
+    mv.lastX = mv.x;
+    placeMarker(targetIndex(mv.x));
+    const tick = () => { // auto-scroll near the edges
+      if (!mv?.active) return;
+      const wr = wrap.getBoundingClientRect();
+      const edge = Math.min(70, wr.width * 0.12);
+      if (mv.lastX < wr.left + edge) wrap.scrollLeft -= Math.ceil((wr.left + edge - mv.lastX) / 5);
+      else if (mv.lastX > wr.right - edge) wrap.scrollLeft += Math.ceil((mv.lastX - (wr.right - edge)) / 5);
+      placeMarker(targetIndex(mv.lastX));
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+  };
+  const finish = async (commit) => {
+    if (!mv) return;
+    const m = mv; mv = null;
+    clearTimeout(m.timer);
+    if (!m.active) return;
+    cancelAnimationFrame(raf);
+    const to = targetIndex(m.lastX);
+    m.ghost.remove(); m.marker.remove();
+    m.box.closest('.tl-slot')?.classList.remove('moving');
+    wrap.classList.remove('arranging');
+    ui.tlDragging = false;
+    ui.tlSuppress = Date.now(); // the drop shouldn't also open the event
+    const from = items.findIndex((x) => x.id === m.id);
+    if (commit && to !== from) await vault.moveItem(m.id, to);
+    else if (ui.tlRedraw) { ui.tlRedraw = false; renderMessages(); }
+  };
   wrap.addEventListener('pointerdown', (e) => {
+    const b = e.target.closest('.tl-box');
+    if (b) {
+      if (e.button > 0) return;
+      mv = { id: b.dataset.item, box: b, x: e.clientX, y: e.clientY, pid: e.pointerId, active: false, touch: e.pointerType !== 'mouse' };
+      if (mv.touch) mv.timer = setTimeout(startMove, 380);
+      return;
+    }
     if (e.pointerType !== 'mouse' || e.target.closest('button')) return;
-    drag = { x: e.clientX, left: wrap.scrollLeft };
+    pan = { x: e.clientX, left: wrap.scrollLeft };
     wrap.setPointerCapture(e.pointerId); wrap.classList.add('dragging');
   });
-  wrap.addEventListener('pointermove', (e) => { if (drag) wrap.scrollLeft = drag.left - (e.clientX - drag.x); });
-  const end = () => { drag = null; wrap.classList.remove('dragging'); };
-  wrap.addEventListener('pointerup', end); wrap.addEventListener('pointercancel', end);
+  wrap.addEventListener('pointermove', (e) => {
+    if (pan) { wrap.scrollLeft = pan.left - (e.clientX - pan.x); return; }
+    if (!mv) return;
+    const dist = Math.hypot(e.clientX - mv.x, e.clientY - mv.y);
+    if (!mv.active) {
+      if (mv.touch && dist > 8) { clearTimeout(mv.timer); mv = null; } // it's a scroll, not a hold
+      else if (!mv.touch && dist > 6) startMove();
+      if (!mv?.active) return;
+    }
+    mv.lastX = e.clientX;
+    mv.ghost.style.left = `${e.clientX - mv.offX}px`;
+  });
+  wrap.addEventListener('pointerup', () => { pan = null; wrap.classList.remove('dragging'); finish(true); });
+  wrap.addEventListener('pointercancel', () => { pan = null; wrap.classList.remove('dragging'); finish(false); });
+  // once a box is picked up on a touch screen, stop the finger from scrolling the page instead
+  wrap.addEventListener('touchmove', (e) => { if (mv?.active) e.preventDefault(); }, { passive: false });
+  wrap.addEventListener('contextmenu', (e) => { if (e.target.closest('.tl-box')) e.preventDefault(); });
 }
 
 function itemDialog(chatId, id) {
@@ -989,11 +1095,34 @@ function itemDialog(chatId, id) {
     ${it ? `<p class="muted small">Added by ${esc(nameOf(it.author))} · ${fmtFull(it.created)}${it.editedBy ? ` · edited by ${esc(nameOf(it.editedBy))}` : ''}</p>` : ''}
     <label>Title<input id="it-title" class="it-title" maxlength="120" value="${esc(it?.title || '')}" placeholder="What happened?" ${it ? '' : 'autofocus'}></label>
     <div class="swatches" role="radiogroup" aria-label="Colour">${Object.keys(TL_COLORS).map((k) => `<button type="button" class="sw c-${k} ${k === color ? 'on' : ''}" data-color="${k}" title="${k}"></button>`).join('')}</div>
+    ${it ? `<div class="move-row"><span class="muted small" id="it-pos"></span><span class="grow"></span>
+      <button type="button" class="btn ghost" id="it-left">${icon('left')} Earlier</button><button type="button" class="btn ghost" id="it-right">Later ${icon('right')}</button></div>` : ''}
     <label>Description<textarea id="it-desc" rows="8" maxlength="10000" placeholder="Details, memories, notes…">${esc(it?.desc || '')}</textarea></label>
     <div class="row end">
       ${it ? `<button class="btn ghost danger-text" id="it-del">${icon('trash')} Delete</button><span class="grow"></span>` : ''}
       <button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="it-save">${it ? 'Save' : 'Add to timeline'}</button>
     </div>`, { cls: 'wide' });
+  if (it) {
+    const list = () => vault.byTimeline.get(it.chat) || [];
+    const showPos = () => {
+      const i = list().findIndex((x) => x.id === it.id), n = list().length;
+      $('#it-pos', d.el).textContent = `Position ${i + 1} of ${n}`;
+      $('#it-left', d.el).disabled = i <= 0;
+      $('#it-right', d.el).disabled = i >= n - 1;
+    };
+    let queue = Promise.resolve(); // rapid taps run one after another
+    const nudge = (delta) => { queue = queue.then(() => step(delta)); };
+    const step = async (delta) => {
+      const i = list().findIndex((x) => x.id === it.id);
+      if (i + delta < 0 || i + delta >= list().length) return;
+      await vault.moveItem(it.id, i + delta);
+      showPos();
+      $(`.tl-slot[data-slot="${CSS.escape(it.id)}"]`)?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+    };
+    $('#it-left', d.el).onclick = () => nudge(-1);
+    $('#it-right', d.el).onclick = () => nudge(1);
+    showPos();
+  }
   $('.swatches', d.el).onclick = (e) => {
     const b = e.target.closest('[data-color]');
     if (!b) return;
